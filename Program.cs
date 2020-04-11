@@ -36,29 +36,28 @@ namespace BufferDemo
                 MMALLog.LoggerFactory = loggerFactory;
 
                 log.LogInformation("Capturing first image...");
-                PreparePipeline();
                 MMALCameraConfig.Rotation = 180;
-                MMALCamera.Instance.ConfigureCameraSettings();
+                await PreparePipeline();
                 await CaptureImage(
                     1); // Usually this would run in a loop and capture a bunch of images with the same config.
                 log.LogInformation("Captured first image.");
 
 
                 log.LogInformation("Capturing second image...");
-                PreparePipeline();
+                ClearPipeline();
                 MMALCameraConfig.Rotation = 180;
                 MMALCameraConfig.ISO = 800;
                 MMALCameraConfig.ShutterSpeed = 2000 * 1000;
-                MMALCamera.Instance.ConfigureCameraSettings();
+                await PreparePipeline();
                 await CaptureImage(
                     2); // Usually this would run in a loop and capture a bunch of images with the same config.
                 log.LogInformation("Captured second image.");
 
                 log.LogInformation("Capturing third image...");
-                PreparePipeline();
+                ClearPipeline();
                 MMALCameraConfig.Rotation = 180;
                 MMALCameraConfig.ExposureMode = MMAL_PARAM_EXPOSUREMODE_T.MMAL_PARAM_EXPOSUREMODE_AUTO;
-                MMALCamera.Instance.ConfigureCameraSettings();
+                await PreparePipeline();
                 await CaptureImage(
                     3); // Usually this would run in a loop and capture a bunch of images with the same config.
                 log.LogInformation("Captured third image.");
@@ -107,22 +106,17 @@ namespace BufferDemo
             log.LogInformation("Image stored successfully...");
         }
 
-        private static void PreparePipeline()
+        private static async Task PreparePipeline()
         {
             log.LogInformation("Preparing camera pipeline...");
-
-            log.LogDebug("Disposing of old parts...");
-            imageEncoder?.Dispose();
-            resizer?.Dispose();
-            nullSink?.Dispose();
-            memoryStreamCaptureHandler?.Dispose();
-
-            log.LogDebug("Creating and configuring pipeline parts...");
             
             memoryStreamCaptureHandler = new MemoryStreamCaptureHandler();
 
             imageEncoder = new MMALImageEncoder();
             resizer = new MMALResizerComponent();
+            nullSink = new MMALNullSinkComponent();
+
+            MMALCamera.Instance.ConfigureCameraSettings();
 
             encoderPortConfig = new MMALPortConfig(MMALEncoding.JPEG, MMALEncoding.I420, 90);
             resizerPortConfig = new MMALPortConfig(MMALEncoding.I420, MMALEncoding.I420, 1024, 768, 0, 0, 0, false, null);
@@ -131,13 +125,22 @@ namespace BufferDemo
             resizer.ConfigureInputPort(new MMALPortConfig(MMALEncoding.OPAQUE, MMALEncoding.I420), MMALCamera.Instance.Camera.StillPort, null)
                    .ConfigureOutputPort(resizerPortConfig, null);
 
-            nullSink = new MMALNullSinkComponent();
-
             MMALCamera.Instance.Camera.StillPort.ConnectTo(resizer);
             resizer.Outputs[0].ConnectTo(imageEncoder);
             MMALCamera.Instance.Camera.PreviewPort.ConnectTo(nullSink);
 
             log.LogInformation("Pipeline preparation completed.");
+
+            await Task.Delay(2000);
+        }
+
+        private static void ClearPipeline()
+        {
+            log.LogDebug("Disposing of old parts...");
+            imageEncoder?.Dispose();
+            resizer?.Dispose();
+            nullSink?.Dispose();
+            memoryStreamCaptureHandler?.Dispose();
         }
     }
 }
