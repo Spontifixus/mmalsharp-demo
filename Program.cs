@@ -56,7 +56,8 @@ namespace BufferDemo
                 log.LogInformation("Capturing third image...");
                 ClearPipeline();
                 MMALCameraConfig.Rotation = 180;
-                MMALCameraConfig.ExposureMode = MMAL_PARAM_EXPOSUREMODE_T.MMAL_PARAM_EXPOSUREMODE_AUTO;
+                MMALCameraConfig.ISO = 0;
+                MMALCameraConfig.ShutterSpeed = 0;
                 await PreparePipeline();
                 await CaptureImage(
                     3); // Usually this would run in a loop and capture a bunch of images with the same config.
