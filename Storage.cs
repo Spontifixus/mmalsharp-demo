@@ -31,7 +31,7 @@ namespace BufferDemo
                 log.LogDebug($"Storing {fileType} image ({imageDataLengthInKiB} KiB)...");
 
                 var fileName = isPrimary ? FileNames.PrimaryImage : FileNames.SecondaryImage;
-                var imageWasUploadedSuccessfully = await UploadFile(input, fileName, cancellationToken);
+                var imageWasUploadedSuccessfully = await UploadFileAsync(input, fileName);
                 if (!imageWasUploadedSuccessfully)
                 {
                     log.LogWarning($"Uploading {fileName} failed.");
@@ -46,7 +46,7 @@ namespace BufferDemo
                 var statusFileJson = JsonSerializer.Serialize(this.LastStatus);
                 var statusFileBytes = Encoding.UTF8.GetBytes(statusFileJson);
                 await using var statusFileMemoryStream = new MemoryStream(statusFileBytes);
-                var statusFileStoredSuccessfully = await UploadFile(statusFileMemoryStream, FileNames.StatusFile, cancellationToken);
+                var statusFileStoredSuccessfully = await UploadFileAsync(statusFileMemoryStream, FileNames.StatusFile);
                 if (!statusFileStoredSuccessfully)
                 {
                     log.LogWarning("Could not store status file.");
@@ -63,7 +63,7 @@ namespace BufferDemo
             }
         }
 
-        private async Task<bool> UploadFile(Stream content, string fileName, CancellationToken cancellationToken)
+        private async Task<bool> UploadFileAsync(Stream content, string fileName)
         {
             var fileSize = content.Length >= 1024
                 ? $"{content.Length / 1024} kiB"
@@ -72,12 +72,14 @@ namespace BufferDemo
 
             content.Rewind();
 
-            if (!Directory.Exists("output"))
+            var folder = "output";
+            if (!Directory.Exists(folder))
             {
-                Directory.CreateDirectory("output");
+                Directory.CreateDirectory(folder);
             }
 
-            await using var fileHandle = File.OpenWrite(fileName);
+            var filePath = Path.Combine(folder, fileName);
+            await using var fileHandle = File.OpenWrite(filePath);
             await content.CopyAndResetAsync(fileHandle);
 
             log.LogDebug($"Successfully stored {fileName}.");
