@@ -1,86 +1,130 @@
-﻿using System.IO;
+﻿using System;
+using System.Diagnostics;
+using System.IO;
+using System.Linq;
+using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.Logging;
-using MMALSharp;
-using MMALSharp.Common;
 using MMALSharp.Common.Utility;
-using MMALSharp.Components;
-using MMALSharp.Handlers;
-using MMALSharp.Ports;
 
 namespace BufferDemo
 {
     class Program
     {
-        static async Task Main()
+        const int CaptureIntervalInSeconds = 5;
+
+        private static CancellationTokenSource tokenSource;
+        private static int completedImageCount;
+        private static int failedImageCount;
+
+        static async Task Main(params string[] args)
         {
+            var enableMMALLog = args.Contains("--mmallog");
+
+            // Ensure to register the cancellation key (CTRL+C) so
+            // we can properly shut down the application and release
+            // the used resources.
+            Console.CancelKeyPress += Console_OnCancelKeyPress;
+
+            // Setup logging.
+            // There is no DI-Container in this app, so we need
+            // to create the loggers needed for the camera and
+            // the storage components
             var loggerFactory = LoggerFactory.Create(builder =>
             {
-                builder.AddConsole(o => o.DisableColors = true);
+                builder.AddConsole(o =>
+                {
+                    o.DisableColors = true;
+                    o.TimestampFormat = "dd HH:mm:ss.fff ";
+                });
                 builder.SetMinimumLevel(LogLevel.Debug);
             });
             var log = loggerFactory.CreateLogger<Program>();
-            MMALLog.LoggerFactory = loggerFactory;
+            var cameraLog = loggerFactory.CreateLogger<MMALSharpCamera>();
+            var storageLog = loggerFactory.CreateLogger<Storage>();
 
-            log.LogInformation("Configuring camera...");
+            // Here we go!
+            log.LogInformation("Hello!");
 
-            var camera = MMALCamera.Instance;
-            camera.ConfigureCameraSettings();
-
-            var imageEncoder = new MMALImageEncoder();
-            var resizer = new MMALResizerComponent();
-
-            var encoderPortConfig = new MMALPortConfig(MMALEncoding.JPEG, MMALEncoding.I420, 90);
-            var resizerPortConfig = new MMALPortConfig(MMALEncoding.I420, MMALEncoding.I420, 1024, 768, 0, 0, 0, false, null);
-
-            resizer.ConfigureInputPort(new MMALPortConfig(MMALEncoding.OPAQUE, MMALEncoding.I420), camera.Camera.StillPort,
-                    null)
-                .ConfigureOutputPort(resizerPortConfig, null);
-
-            var nullSink = new MMALNullSinkComponent();
-
-            camera.Camera.StillPort.ConnectTo(resizer);
-            resizer.Outputs[0].ConnectTo(imageEncoder);
-            camera.Camera.PreviewPort.ConnectTo(nullSink);
-            log.LogInformation("Camera configuration completed.");
-
-            for (var i = 0; i < 100; i++)
+            // Setup the camera and storage components. And while
+            // we're at it, lets configure the logger for MMALSharp.
+            if (enableMMALLog)
             {
-                // Create a memory stream handler, so the image
-                // data that was captured gets stored in a stream
-                // for further handling.
-                using var memoryStreamHandler = new MemoryStreamCaptureHandler();
-
-                // Capture th image
-                log.LogInformation("Capturing image...");
-                imageEncoder.ConfigureOutputPort(encoderPortConfig, memoryStreamHandler);
-                await camera.ProcessAsync(camera.Camera.StillPort);
-
-                // Sometimes the stream is empty after capturing.
-                // If that happens, we skip the storing the image
-                // and continue by capturing the next image
-                if (memoryStreamHandler.CurrentStream.Length == 0)
-                {
-                    log.LogWarning("Capturing image failed. Skipping iteration.");
-                    continue;
-                }
-                log.LogInformation("Image captured successfully.");
-
-
-                // Simulate Storage
-                // In the real world code this gets uploaded
-                // to an Azure blob storage - that's why I did
-                // not use one of the other capture handlers here.
-                log.LogInformation("Storing image...");
-                if (!Directory.Exists("images"))
-                    Directory.CreateDirectory("images");
-                await using var fileStream = File.OpenWrite($"images/test{i}.jpg");
-                memoryStreamHandler.CurrentStream.Seek(0, SeekOrigin.Begin);
-                await memoryStreamHandler.CurrentStream.CopyToAsync(fileStream);
-                log.LogInformation("Image stored successfully...");
-
-                memoryStreamHandler.Dispose();
+                MMALLog.LoggerFactory = loggerFactory;
             }
+            var camera = new MMALSharpCamera(cameraLog);
+            var storage = new Storage(storageLog);
+
+            // This is the loop from the server that usually runs
+            // the camera.
+            tokenSource = new CancellationTokenSource();
+            try
+            {
+                // This enables the camera. The configuration of the
+                // camera is handled in the MMALSharpCamera class.
+                await camera.EnableAsync(tokenSource.Token);
+
+                while (!tokenSource.IsCancellationRequested)
+                {
+                    log.LogDebug($"Shot {completedImageCount} images so far. {failedImageCount} attempts failed.");
+
+                    var shotWatch = Stopwatch.StartNew();
+                    await using var memoryStream = new MemoryStream();
+
+                    // Shoot the actual image. If this is the 12th image,
+                    // the camera pipeline will be reconfigured.
+                    var imageWasShot = await camera.TakePhotoAsync(memoryStream, tokenSource.Token);
+                    if (!imageWasShot)
+                    {
+                        failedImageCount++;
+                        continue;
+                    }
+
+                    // Give the program the chance to exit
+                    if (tokenSource.IsCancellationRequested) break;
+
+                    // Store the files on disk. In the real world they
+                    // get uploaded to an Azure blob store.
+                    var imageWasStored = await storage.StoreImageAsync(memoryStream, tokenSource.Token);
+                    if (!imageWasStored)
+                    {
+                        failedImageCount++;
+                        continue;
+                    }
+
+                    completedImageCount++;
+
+                    // Now wait for a certain amount of time, so that there
+                    // are about 5 seconds between each capture.
+                    shotWatch.Stop();
+                    var delay = Math.Max(0, CaptureIntervalInSeconds * 1000 - shotWatch.ElapsedMilliseconds);
+                    log.LogDebug($"Waiting {delay} ms before next shot...");
+                    await Task.Delay((int) delay, tokenSource.Token);
+                }
+            }
+            catch (TaskCanceledException)
+            {
+                log.LogWarning("Image capturing thread was aborted.");
+            }
+            catch (Exception ex)
+            {
+                log.LogError(ex, "Image capturing thread failed unexpectedly.");
+            }
+            finally
+            {
+                // Use a new cancellation token source to actually shut down the application.
+                tokenSource = new CancellationTokenSource();
+                await camera.DisableAsync(tokenSource.Token);
+                camera.Dispose();
+            }
+
+            log.LogInformation("Goodbye.");
+        }
+
+        private static void Console_OnCancelKeyPress(object sender, ConsoleCancelEventArgs e)
+        {
+            e.Cancel = true;
+            tokenSource?.Cancel();
         }
     }
 }
