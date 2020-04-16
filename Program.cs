@@ -5,6 +5,7 @@ using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Console;
 using MMALSharp.Common.Utility;
 
 namespace BufferDemo
@@ -35,9 +36,10 @@ namespace BufferDemo
                 builder.AddConsole(o =>
                 {
                     o.DisableColors = true;
+                    o.Format = ConsoleLoggerFormat.Systemd;
                     o.TimestampFormat = "dd HH:mm:ss.fff ";
                 });
-                builder.SetMinimumLevel(LogLevel.Debug);
+                builder.SetMinimumLevel(LogLevel.Information);
             });
             var log = loggerFactory.CreateLogger<Program>();
             var cameraLog = loggerFactory.CreateLogger<MMALSharpCamera>();
@@ -66,7 +68,7 @@ namespace BufferDemo
 
                 while (!tokenSource.IsCancellationRequested)
                 {
-                    log.LogDebug($"Shot {completedImageCount} images so far. {failedImageCount} attempts failed.");
+                    log.LogInformation($"Shot {completedImageCount} images so far. {failedImageCount} attempts failed.");
 
                     var shotWatch = Stopwatch.StartNew();
                     await using var memoryStream = new MemoryStream();
@@ -98,8 +100,8 @@ namespace BufferDemo
                     // are about 5 seconds between each capture.
                     shotWatch.Stop();
                     var delay = Math.Max(0, CaptureIntervalInSeconds * 1000 - shotWatch.ElapsedMilliseconds);
-                    log.LogDebug($"Waiting {delay} ms before next shot...");
-                    await Task.Delay((int) delay, tokenSource.Token);
+                    log.LogInformation($"Waiting {delay} ms before next shot...");
+                    await Task.Delay((int)delay, tokenSource.Token);
                 }
             }
             catch (TaskCanceledException)
