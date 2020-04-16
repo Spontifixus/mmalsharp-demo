@@ -37,6 +37,8 @@ namespace BufferDemo
 
                 log.LogInformation("Capturing first image...");
                 MMALCameraConfig.Rotation = 180;
+                MMALCameraConfig.ISO = 800;
+                MMALCameraConfig.ShutterSpeed = 2000 * 1000;
                 await PreparePipeline();
                 await CaptureImage(
                     1); // Usually this would run in a loop and capture a bunch of images with the same config.
